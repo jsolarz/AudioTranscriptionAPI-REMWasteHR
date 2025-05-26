@@ -1,13 +1,12 @@
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
-using System;
-using System.Threading.Tasks;
 using AudioTranscriptionAPI.Models;
 using AudioTranscriptionAPI.Services;
+using Microsoft.AspNetCore.Mvc;
 
 namespace AudioTranscriptionAPI.Controllers
 {
+    /// <summary>
+    /// 🎯 Controller for audio transcription and accent analysis
+    /// </summary>
     [Route("api/[controller]")]
     [ApiController]
     public class TranscriptionController : ControllerBase
@@ -23,8 +22,36 @@ namespace AudioTranscriptionAPI.Controllers
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
+        /// <summary>
+        /// 🎬 Process video URL for accent analysis
+        /// </summary>
         [HttpPost("transcribe")]
-        public async Task<ActionResult<TranscriptionResult>> PostTranscription(IFormFile audioFile)
+        public async Task<ActionResult<TranscriptionResult>> PostTranscription([FromBody] VideoUrlRequest request)
+        {
+            if (request?.VideoUrl is null)
+            {
+                return BadRequest("Video URL is required.");
+            }
+
+            try
+            {
+                _logger.LogInformation("Processing video URL: {VideoUrl}", request.VideoUrl);
+                var transcriptionResult = await _transcriptionService.TranscribeFromUrl(request.VideoUrl);
+                return Ok(transcriptionResult);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing video URL: {VideoUrl}", request.VideoUrl);
+                return StatusCode(StatusCodes.Status500InternalServerError,
+                    new { message = "Error processing video URL", details = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// 📁 Legacy file upload endpoint (keeping for backward compatibility)
+        /// </summary>
+        [HttpPost("upload")]
+        public async Task<ActionResult<TranscriptionResult>> PostTranscriptionFile(IFormFile audioFile)
         {
             if (audioFile == null || audioFile.Length == 0)
             {

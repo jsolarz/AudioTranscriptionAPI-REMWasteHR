@@ -1,12 +1,6 @@
-using System;
-using System.IO;
-using System.Threading.Tasks;
 using AudioTranscriptionAPI.Models;
-using Microsoft.AspNetCore.Http;
 using Microsoft.CognitiveServices.Speech;
 using Microsoft.CognitiveServices.Speech.Audio;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
 
 namespace AudioTranscriptionAPI.Services;
 
@@ -15,12 +9,14 @@ public class TranscriptionService : ITranscriptionService
     private readonly string _subscriptionKey;
     private readonly string _region;
     private readonly ILogger<TranscriptionService> _logger;
+    private readonly HttpClient _httpClient;
 
-    public TranscriptionService(IConfiguration configuration, ILogger<TranscriptionService> logger)
+    public TranscriptionService(IConfiguration configuration, ILogger<TranscriptionService> logger, HttpClient httpClient)
     {
         _subscriptionKey = configuration["AzureSpeech:SubscriptionKey"] ?? throw new ArgumentNullException("AzureSpeech:SubscriptionKey");
         _region = configuration["AzureSpeech:Region"] ?? throw new ArgumentNullException("AzureSpeech:Region");
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
     }
 
     public async Task<TranscriptionResult> TranscribeAudio(IFormFile audioFile)
@@ -75,6 +71,140 @@ public class TranscriptionService : ITranscriptionService
         // Use the enhanced method with unknown format (will try to detect from headers)
         var format = DetectAudioFormat(audioData, "unknown");
         return await TranscribeAudioWithFormat(audioData, format);
+    }
+
+    /// <summary>
+    /// 🔗 Process video URL and extract audio for transcription
+    /// </summary>
+    public async Task<TranscriptionResult> TranscribeFromUrl(string videoUrl)
+    {
+        if (string.IsNullOrWhiteSpace(videoUrl))
+        {
+            return new TranscriptionResult
+            {
+                IsSuccessful = false,
+                ErrorMessage = "Video URL cannot be empty"
+            };
+        }
+
+        try
+        {
+            _logger.LogInformation("🎬 Starting to process video URL: {VideoUrl}", videoUrl);
+
+            // Validate URL format
+            if (!Uri.TryCreate(videoUrl, UriKind.Absolute, out var uri))
+            {
+                return new TranscriptionResult
+                {
+                    IsSuccessful = false,
+                    ErrorMessage = "Invalid URL format"
+                };
+            }
+
+            // Download the file from URL
+            _logger.LogInformation("📥 Downloading content from URL: {VideoUrl}", videoUrl);
+            var audioData = await DownloadAudioFromUrl(videoUrl);
+
+            if (audioData == null || audioData.Length == 0)
+            {
+                return new TranscriptionResult
+                {
+                    IsSuccessful = false,
+                    ErrorMessage = "Failed to download audio content from URL"
+                };
+            }
+
+            _logger.LogInformation("✅ Successfully downloaded {Size} bytes from URL", audioData.Length);
+
+            // Process the downloaded audio
+            return await TranscribeAudio(audioData);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "❌ HTTP error downloading from URL: {VideoUrl}", videoUrl);
+            return new TranscriptionResult
+            {
+                IsSuccessful = false,
+                ErrorMessage = $"Failed to download from URL: {ex.Message}"
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "❌ Error processing video URL: {VideoUrl}", videoUrl);
+            return new TranscriptionResult
+            {
+                IsSuccessful = false,
+                ErrorMessage = $"Failed to process video URL: {ex.Message}"
+            };
+        }
+    }
+
+    /// <summary>
+    /// 📥 Download audio/video content from URL
+    /// </summary>
+    private async Task<byte[]> DownloadAudioFromUrl(string url)
+    {
+        try
+        {
+            // Set timeout and headers for better compatibility
+            _httpClient.Timeout = TimeSpan.FromMinutes(10); // Large files may take time
+            _httpClient.DefaultRequestHeaders.Add("User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+
+            _logger.LogInformation("📡 Making HTTP request to: {Url}", url);
+
+            using var response = await _httpClient.GetAsync(url);
+            response.EnsureSuccessStatusCode();
+
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "unknown";
+            var contentLength = response.Content.Headers.ContentLength ?? 0;
+
+            _logger.LogInformation("📋 Response - Type: {ContentType}, Length: {ContentLength} bytes",
+                contentType, contentLength);
+
+            // Check if content type suggests audio/video
+            if (!IsAudioVideoContent(contentType, url))
+            {
+                _logger.LogWarning("⚠️ Content type '{ContentType}' may not be audio/video", contentType);
+            }
+
+            // Download content
+            var content = await response.Content.ReadAsByteArrayAsync();
+            _logger.LogInformation("✅ Download completed: {ActualSize} bytes", content.Length);
+
+            return content;
+        }
+        catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
+        {
+            _logger.LogError("⏰ Download timed out for URL: {Url}", url);
+            throw new HttpRequestException("Download timed out", ex);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "🌐 HTTP error downloading from URL: {Url}", url);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// 🎵 Check if content type or URL suggests audio/video content
+    /// </summary>
+    private static bool IsAudioVideoContent(string contentType, string url)
+    {
+        var audioVideoTypes = new[]
+        {
+            "audio/", "video/", "application/octet-stream",
+            "application/ogg", "application/mp4"
+        };
+
+        var audioVideoExtensions = new[]
+        {
+            ".mp3", ".wav", ".mp4", ".m4a", ".ogg", ".opus",
+            ".flac", ".aac", ".webm", ".avi", ".mov", ".mkv"
+        };
+
+        return audioVideoTypes.Any(type => contentType.Contains(type, StringComparison.OrdinalIgnoreCase)) ||
+               audioVideoExtensions.Any(ext => url.Contains(ext, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
