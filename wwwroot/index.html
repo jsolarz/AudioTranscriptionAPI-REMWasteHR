@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>🎯 Accent Analyzer</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        .container {
+            background: white;
+            border-radius: 12px;
+            padding: 2rem;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 2rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: #333;
+        }
+
+        input[type="url"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+            box-sizing: border-box;
+        }
+
+        input[type="url"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .analyze-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s;
+        }
+
+        .analyze-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+        }
+
+        .analyze-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 1rem 0;
+            color: #667eea;
+        }
+
+        .result {
+            display: none;
+            margin-top: 2rem;
+            padding: 1.5rem;
+            border-radius: 8px;
+            background: #f8f9fa;
+        }
+
+        .result.success {
+            border-left: 4px solid #28a745;
+        }
+
+        .result.error {
+            border-left: 4px solid #dc3545;
+            background: #f8d7da;
+        }
+
+        .accent-result {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .confidence {
+            color: #667eea;
+            font-weight: 600;
+        }
+
+        .transcription {
+            margin-top: 1rem;
+            padding: 1rem;
+            background: white;
+            border-radius: 6px;
+            font-style: italic;
+        }
+
+        .examples {
+            margin-top: 2rem;
+            padding: 1rem;
+            background: #e9ecef;
+            border-radius: 8px;
+        }
+
+        .examples h3 {
+            margin-top: 0;
+            color: #495057;
+        }
+
+        .example-link {
+            display: block;
+            color: #667eea;
+            text-decoration: none;
+            margin: 0.5rem 0;
+            cursor: pointer;
+        }
+
+        .example-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎯 Accent Analyzer</h1>
+        <p class="subtitle">Analyze English accents from video URLs using Azure Speech Services</p>
+
+        <form id="accentForm">
+            <div class="form-group">
+                <label for="videoUrl">🎬 Video URL (Loom, YouTube, direct MP4, etc.)</label>
+                <input type="url" id="videoUrl" name="videoUrl"
+                       placeholder="https://example.com/video.mp4"
+                       required />
+            </div>
+
+            <button type="submit" class="analyze-btn" id="analyzeBtn">
+                🚀 Analyze Accent
+            </button>
+        </form>
+
+        <div class="loading" id="loading">
+            <p>🔄 Analyzing accent... This may take a moment.</p>
+        </div>
+
+        <div class="result" id="result">
+            <div id="resultContent"></div>
+        </div>
+
+        <div class="examples">
+            <h3>📝 Example URLs to try:</h3>
+            <a href="#" class="example-link" data-url="https://sample-videos.com/zip/10/mp4/SampleVideo_1280x720_1mb.mp4">
+                📹 Sample Video 1
+            </a>
+            <a href="#" class="example-link" data-url="https://www.learningcontainer.com/wp-content/uploads/2020/05/sample-mp4-file.mp4">
+                📹 Sample Video 2
+            </a>
+            <p><small>💡 <strong>Tip:</strong> Use any public video URL. The analyzer will download, extract audio, and classify the accent.</small></p>
+        </div>    </div>
+
+    <script>
+        const form = document.getElementById('accentForm');
+        const videoUrlInput = document.getElementById('videoUrl');
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const loading = document.getElementById('loading');
+        const result = document.getElementById('result');
+        const resultContent = document.getElementById('resultContent');
+
+        document.querySelectorAll('.example-link').forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                videoUrlInput.value = e.target.getAttribute('data-url');
+            });
+        });
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const videoUrl = videoUrlInput.value.trim();
+            if (!videoUrl) return;
+
+            analyzeBtn.disabled = true;
+            analyzeBtn.textContent = '🔄 Analyzing...';
+            loading.style.display = 'block';
+            result.style.display = 'none';            try {
+                const response = await fetch('/api/transcription/transcribe', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ videoUrl: videoUrl })
+                });
+
+                const data = await response.json();                if (response.ok) {
+                    result.className = 'result success';
+                    resultContent.innerHTML = `
+                        <div class="accent-result">
+                            🎯 Detected Accent: <strong>${data.accentClassification}</strong>
+                        </div>
+                        <div>
+                            Confidence: <span class="confidence">${data.confidenceScore}%</span>
+                        </div>
+                        ${data.summary ? `<p><strong>Summary:</strong> ${data.summary}</p>` : ''}
+                    `;
+                } else {
+                    result.className = 'result error';
+                    resultContent.innerHTML = `
+                        <div class="accent-result">❌ Analysis Failed</div>
+                        <p>${data.message || data || 'Unknown error occurred'}</p>
+                    `;
+                }
+            } catch (error) {
+                result.className = 'result error';
+                resultContent.innerHTML = `
+                    <div class="accent-result">❌ Connection Error</div>
+                    <p>Could not connect to the accent analysis service: ${error.message}</p>
+                `;
+            } finally {
+                analyzeBtn.disabled = false;
+                analyzeBtn.textContent = '🚀 Analyze Accent';
+                loading.style.display = 'none';
+                result.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>
